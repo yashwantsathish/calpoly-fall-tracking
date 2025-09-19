@@ -248,8 +248,10 @@ def render_ui(off_df: pd.DataFrame, def_df: pd.DataFrame, agg: pd.DataFrame):
                     for s in stats_list:
                         cols.append((s, "Success Rate"))
                         cols.append((s, "Opportunities"))
-                    # shooting fouls: only display Shooting Fouls / Poss (count divided by DefPoss from agg)
-                    cols.append(("Shooting Fouls", "Per Poss"))
+                    # shooting fouls: show Count, Possessions, and % of Poss (sf / poss)
+                    cols.append(("Shooting Fouls", "Count"))
+                    cols.append(("Shooting Fouls", "Possessions"))
+                    cols.append(("Shooting Fouls", "% of Poss"))
                     mcols = pd.MultiIndex.from_tuples(cols)
 
                     player_counts = counts_df.set_index("Player") if not counts_df.empty else pd.DataFrame()
@@ -264,14 +266,22 @@ def render_ui(off_df: pd.DataFrame, def_df: pd.DataFrame, agg: pd.DataFrame):
                             row.append(pct)
                             row.append(int(opp) if not pd.isna(opp) else np.nan)
 
-                        # shooting fouls per possession: use Possessions from counts_df (Team:team1/team2 sum)
-                        sf_count = player_counts.loc[player, "Shooting Fouls"] if (player in player_counts.index and "Shooting Fouls" in player_counts.columns) else 0
-                        poss = player_counts.loc[player, "Possessions"] if (player in player_counts.index and "Possessions" in player_counts.columns) else np.nan
-                        if not pd.isna(poss) and poss > 0:
-                            sf_per_pos = sf_count / poss
+                        # shooting fouls: prefer counts_df values, fall back to stats_df values from specialteams
+                        if (player in player_counts.index) and "Shooting Fouls" in player_counts.columns:
+                            sf_count = int(player_counts.loc[player, "Shooting Fouls"])
                         else:
-                            sf_per_pos = np.nan
-                        # round Shooting Fouls per possession to 1 decimal
+                            sf_count = int(r.get("Shooting Fouls", 0) if not pd.isna(r.get("Shooting Fouls", np.nan)) else 0)
+
+                        if (player in player_counts.index) and "Possessions" in player_counts.columns:
+                            poss = int(player_counts.loc[player, "Possessions"])
+                        else:
+                            poss = int(r.get("Possessions", 0) if not pd.isna(r.get("Possessions", np.nan)) else 0)
+
+                        # append raw count, raw possessions, and per-pos (rounded 1 decimal)
+                        # express as per 100 possessions
+                        sf_per_pos = (sf_count / poss) * 100 if (poss and poss > 0) else np.nan
+                        row.append(sf_count if sf_count is not None else np.nan)
+                        row.append(poss if poss is not None else np.nan)
                         row.append(round(sf_per_pos, 1) if not pd.isna(sf_per_pos) else np.nan)
 
                         combined_rows.append(row)
@@ -282,13 +292,19 @@ def render_ui(off_df: pd.DataFrame, def_df: pd.DataFrame, agg: pd.DataFrame):
                         return "—" if pd.isna(v) else f"{v:.1f}%"
                     def fmt_opp(v):
                         return "—" if pd.isna(v) else f"{int(v):d}"
+                    def fmt_sf_count(v):
+                        return "—" if pd.isna(v) else f"{int(v):d}"
+                    def fmt_sf_poss(v):
+                        return "—" if pd.isna(v) else f"{int(v):d}"
                     def fmt_sf_perpos(v):
                         return "—" if pd.isna(v) else f"{v:.1f}"
                     fmt_map = {("", "Player"): (lambda v: v)}
                     for s in stats_list:
                         fmt_map[(s, "Success Rate")] = fmt_pct
                         fmt_map[(s, "Opportunities")] = fmt_opp
-                    fmt_map[("Shooting Fouls", "Per Poss")] = fmt_sf_perpos
+                    fmt_map[("Shooting Fouls", "Count")] = fmt_sf_count
+                    fmt_map[("Shooting Fouls", "Possessions")] = fmt_sf_poss
+                    fmt_map[("Shooting Fouls", "% of Poss")] = fmt_sf_perpos
 
                     styler = combined_df.style.format(fmt_map)
                     pct_cols = [(s, "Success Rate") for s in stats_list]
@@ -317,7 +333,7 @@ def render_ui(off_df: pd.DataFrame, def_df: pd.DataFrame, agg: pd.DataFrame):
                         for s in stats_list:
                             team_cols.append((s, "Success Rate"))
                             team_cols.append((s, "Opportunities"))
-                        team_cols.append(("Shooting Fouls", "Per Poss"))
+                        team_cols.append(("Shooting Fouls", "% of Poss"))
                         mcols_team = pd.MultiIndex.from_tuples(team_cols)
 
                         # build combined team row using team_df and counts
@@ -334,19 +350,19 @@ def render_ui(off_df: pd.DataFrame, def_df: pd.DataFrame, agg: pd.DataFrame):
                             team_row.append(pct)
                             team_row.append(opp)
 
-                        # team shooting fouls per possession: use Possessions from counts_team (preferred)
+                        # team shooting fouls count and possessions and per-pos: prefer counts_team
                         team_sf = team_df.iloc[0].get("Shooting Fouls", np.nan) if "Shooting Fouls" in team_df.columns else 0
                         if not counts_team.empty and "Possessions" in counts_team.columns:
-                            team_poss = counts_team["Possessions"].sum()
+                            team_poss = int(counts_team["Possessions"].sum())
                         else:
                             # fallback: sum DefPoss from agg for special players
                             special_players = stats_df["Player"].tolist()
-                            team_poss = agg.loc[agg["Player"].isin(special_players), "DefPoss"].sum() if not agg.empty else 0
-                        if team_poss > 0:
-                            team_sf_perpos = float(team_sf) / float(team_poss)
-                        else:
-                            team_sf_perpos = np.nan
-                        # round team Shooting Fouls per possession to 1 decimal
+                            team_poss = int(agg.loc[agg["Player"].isin(special_players), "DefPoss"].sum()) if not agg.empty else 0
+                        team_sf = int(team_sf) if not pd.isna(team_sf) else 0
+                        # express team SF as per 100 possessions
+                        team_sf_perpos = (team_sf / team_poss) * 100 if (team_poss and team_poss > 0) else np.nan
+                        team_row.append(team_sf)
+                        team_row.append(team_poss)
                         team_row.append(round(team_sf_perpos, 1) if not pd.isna(team_sf_perpos) else np.nan)
 
                         # ensure team_row length matches number of columns (mcols_team)
@@ -369,7 +385,7 @@ def render_ui(off_df: pd.DataFrame, def_df: pd.DataFrame, agg: pd.DataFrame):
                         for s in stats_list:
                             fmt_map_team[(s, "Success Rate")] = fmt_pct_team
                             fmt_map_team[(s, "Opportunities")] = fmt_opp_team
-                        fmt_map_team[("Shooting Fouls", "Per Poss")] = fmt_sf_team_perpos
+                        fmt_map_team[("Shooting Fouls", "% of Poss")] = fmt_sf_team_perpos
 
                         styler_team = combined_team_df.style.format(fmt_map_team)
 

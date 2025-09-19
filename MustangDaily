@@ -1,0 +1,145 @@
+from pathlib import Path
+import pandas as pd
+import numpy as np
+from specialteams import (
+    list_defense_files,
+    compute_def_special_rates_for_paths,
+    compute_def_special_player_counts,
+    compute_def_special_team_summary,
+)
+from utils import list_offense_files
+
+DATA_DIR = Path(__file__).parent
+DEF_FOLDER = DATA_DIR / "Defense"
+
+# shot-chart weighting (best-effort; matches defense.py weights)
+SHOT_WEIGHTS = {
+    "rZ": 2.0,
+    "rz": 2.0,
+    "tt": 2.0,
+    "io3": 3.0,
+    "nio3": 3.0,
+    "ft 2": 1.5,
+    "ft 3": 2.25,
+}
+
+def latest_by_name(paths):
+    return sorted(paths)[-1] if paths else None
+
+def load_latest_paths():
+    off_paths = list_offense_files()
+    def_paths = list_defense_files()
+    latest_off = latest_by_name([p.name for p in off_paths]) if off_paths else None
+    latest_def = latest_by_name([p.name for p in def_paths]) if def_paths else None
+    return latest_off, latest_def, off_paths, def_paths
+
+def compute_def_player_ratings(path: Path) -> pd.DataFrame:
+    df = pd.read_csv(path)
+    if df.empty:
+        return pd.DataFrame()
+    name_col = df.columns[0]
+    # normalize numeric columns used for shot chart / possessions
+    cols = list(df.columns)
+    # find shot chart columns (look for "shot chart" and "(D)" optionally)
+    shot_cols = [c for c in cols if "shot chart" in c.lower()]
+    # find specific columns by keyword and weight them
+    defpoints = []
+    for _, row in df.iterrows():
+        total = 0.0
+        for c in shot_cols:
+            key = c.split(":")[-1].lower()
+            # remove trailing (d) and +/- markers
+            key = key.replace("(d)", "").strip()
+            key = key.replace("+", "").replace("-", "").strip()
+            # map to a known weight if possible
+            w = None
+            for k in SHOT_WEIGHTS:
+                if k in key:
+                    w = SHOT_WEIGHTS[k]
+                    break
+            val = pd.to_numeric(row.get(c, 0), errors="coerce")
+            val = 0 if pd.isna(val) else float(val)
+            if w:
+                total += val * w
+        defpoints.append(total)
+    df["_DefPoints_row"] = defpoints
+    # possessions: prefer defense_lab, else Team:team1 + Team:team2
+    poss_cols = [c for c in cols if c.lower() in ("defense_lab", "team:team1", "team:team2")]
+    defposs = []
+    for _, row in df.iterrows():
+        if "defense_lab" in [c.lower() for c in poss_cols]:
+            v = pd.to_numeric(row.get("defense_lab", 0), errors="coerce")
+            defposs.append(0 if pd.isna(v) else int(v))
+        else:
+            v1 = pd.to_numeric(row.get("Team:team1", 0), errors="coerce")
+            v2 = pd.to_numeric(row.get("Team:team2", 0), errors="coerce")
+            v1 = 0 if pd.isna(v1) else int(v1)
+            v2 = 0 if pd.isna(v2) else int(v2)
+            defposs.append(v1 + v2)
+    df["_DefPoss_row"] = defposs
+    # aggregate by player (use the raw name cell as-is)
+    agg = df.groupby(name_col, as_index=False).agg({
+        "_DefPoints_row": "sum",
+        "_DefPoss_row": "sum"
+    }).rename(columns={name_col: "Player", "_DefPoints_row": "DefPoints", "_DefPoss_row": "DefPoss"})
+    agg["DefRating"] = np.where(agg["DefPoss"]>0, (agg["DefPoints"]/agg["DefPoss"]*100).round(1), np.nan)
+    return agg
+
+def main():
+    latest_off_name, latest_def_name, off_paths, def_paths = load_latest_paths()
+    print(f"Latest offense file: {latest_off_name}")
+    print(f"Latest defense file: {latest_def_name}")
+    if not def_paths:
+        print("No defense files found.")
+        return
+    # select only the latest defense file path
+    def_file_path = [p for p in def_paths if p.name == latest_def_name]
+    if not def_file_path:
+        print("Latest defense file not found in list.")
+        return
+    def_path = def_file_path[0]
+
+    # special teams
+    rates = compute_def_special_rates_for_paths([def_path])
+    counts = compute_def_special_player_counts([def_path], ["Box Out", "Forced Turnover"])
+    team = compute_def_special_team_summary([def_path], ["Box Out", "Forced Turnover"])
+
+    # defensive ratings (from same latest def file)
+    def_agg = compute_def_player_ratings(def_path)
+
+    # print text report
+    print("\nSpecial Teams — per-player")
+    df = rates.merge(counts, on="Player", how="left")
+    for _, r in df.iterrows():
+        p = r["Player"]
+        bo_pct = r.get("Box Out", np.nan)
+        bo_opp = r.get("Box Out Opportunities", 0)
+        ft_pct = r.get("Forced Turnover", np.nan)
+        ft_opp = r.get("Forced Turnover Opportunities", 0)
+        sf = r.get("Shooting Fouls", 0) if "Shooting Fouls" in r.index else 0
+        poss = r.get("Possessions", 0) if "Possessions" in r.index else 0
+        sf_per = round((sf/poss) if poss>0 else np.nan, 3) if not pd.isna(poss) else np.nan
+        # compute raw success counts from pct and opp when available
+        bo_succ = int(round((bo_pct or 0)/100*bo_opp)) if not pd.isna(bo_pct) else "—"
+        ft_succ = int(round((ft_pct or 0)/100*ft_opp)) if not pd.isna(ft_pct) else "—"
+        print(f"- {p}: BoxOut {bo_pct if not pd.isna(bo_pct) else '—'}% ({bo_succ}/{int(bo_opp)}), ForcedTO {ft_pct if not pd.isna(ft_pct) else '—'}% ({ft_succ}/{int(ft_opp)}), SF {int(sf)}, Poss {int(poss)}, SF/Poss {sf_per if not pd.isna(sf_per) else '—'}")
+
+    print("\nTeam Special Teams summary:")
+    print(team.to_string(index=False))
+
+    # Top / Bottom Defensive Rating
+    if not def_agg.empty:
+        valid = def_agg[def_agg["DefPoss"] > 0].copy()
+        if not valid.empty:
+            best = valid.sort_values("DefRating", ascending=False).iloc[0]
+            worst = valid.sort_values("DefRating", ascending=True).iloc[0]
+            print("\nTop / Bottom Defensive Rating (per 100 def poss)")
+            print(f"- Best: {best['Player']} — DRtg {best['DefRating']} (DefPoss {int(best['DefPoss'])}, DefPoints {int(best['DefPoints'])})")
+            print(f"- Worst: {worst['Player']} — DRtg {worst['DefRating']} (DefPoss {int(worst['DefPoss'])}, DefPoints {int(worst['DefPoints'])})")
+        else:
+            print("\nNo players with defensive possessions to compute DRtg.")
+    else:
+        print("\nNo defensive aggregation available.")
+
+if __name__ == '__main__':
+    main()
