@@ -335,6 +335,9 @@ def render_ui(off_df: pd.DataFrame, def_df: pd.DataFrame, agg: pd.DataFrame):
                         for s in stats_list:
                             team_cols.append((s, "Success Rate"))
                             team_cols.append((s, "Opportunities"))
+                        # shooting fouls: show Count, Possessions, and % of Poss (sf / poss)
+                        team_cols.append(("Shooting Fouls", "Count"))
+                        team_cols.append(("Shooting Fouls", "Possessions"))
                         team_cols.append(("Shooting Fouls", "% of Poss"))
                         mcols_team = pd.MultiIndex.from_tuples(team_cols)
 
@@ -380,6 +383,10 @@ def render_ui(off_df: pd.DataFrame, def_df: pd.DataFrame, agg: pd.DataFrame):
                             return "—" if pd.isna(v) else f"{v:.1f}%"
                         def fmt_opp_team(v):
                             return "—" if pd.isna(v) else f"{int(v):d}"
+                        def fmt_sf_count_team(v):
+                            return "—" if pd.isna(v) else f"{int(v):d}"
+                        def fmt_sf_poss_team(v):
+                            return "—" if pd.isna(v) else f"{int(v):d}"
                         def fmt_sf_team_perpos(v):
                             return "—" if pd.isna(v) else f"{v:.1f}"
 
@@ -387,6 +394,8 @@ def render_ui(off_df: pd.DataFrame, def_df: pd.DataFrame, agg: pd.DataFrame):
                         for s in stats_list:
                             fmt_map_team[(s, "Success Rate")] = fmt_pct_team
                             fmt_map_team[(s, "Opportunities")] = fmt_opp_team
+                        fmt_map_team[("Shooting Fouls", "Count")] = fmt_sf_count_team
+                        fmt_map_team[("Shooting Fouls", "Possessions")] = fmt_sf_poss_team
                         fmt_map_team[("Shooting Fouls", "% of Poss")] = fmt_sf_team_perpos
 
                         styler_team = combined_team_df.style.format(fmt_map_team)
