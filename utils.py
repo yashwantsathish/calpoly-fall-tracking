@@ -97,7 +97,7 @@ def aggregate_by_player(df_off, df_def, start=None, end=None) -> pd.DataFrame:
     de  = df_def.copy()  if isinstance(df_def, pd.DataFrame) else pd.DataFrame()
 
     expected_off = ["Date", "Player", "OffPoints", "OffPoss"]
-    expected_def = ["Date", "Player", "DefPoints", "DefPoss"]
+    expected_def = ["Date", "Player", "DefPoints", "DefPoss", "ShotsAllowed"]
     for c in expected_off:
         if c not in off.columns:
             if c == "Player":
@@ -123,11 +123,11 @@ def aggregate_by_player(df_off, df_def, start=None, end=None) -> pd.DataFrame:
         de  = de[(de["Date"].isna())  | (de["Date"] <= end)]
 
     off_agg = off.groupby("Player", as_index=False)[["OffPoints", "OffPoss"]].sum()
-    def_agg = de.groupby("Player", as_index=False)[["DefPoints", "DefPoss"]].sum()
+    def_agg = de.groupby("Player", as_index=False)[["DefPoints", "DefPoss", "ShotsAllowed"]].sum()
 
     all_players = pd.DataFrame({"Player": MASTER_PLAYERS})
     out = all_players.merge(off_agg, on="Player", how="left").merge(def_agg, on="Player", how="left")
-    for c in ["OffPoints", "OffPoss", "DefPoints", "DefPoss"]:
+    for c in ["OffPoints", "OffPoss", "DefPoints", "DefPoss", "ShotsAllowed"]:
         out[c] = out[c].fillna(0).astype(int)
 
     # round ratings to 1 decimal

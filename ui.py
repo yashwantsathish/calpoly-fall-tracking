@@ -5,13 +5,15 @@ import streamlit as st
 import plotly.express as px
 
 from constants import CATEGORIES
-from utils import list_offense_files
+from utils import list_offense_files, aggregate_by_player
 from offense import (
     compute_offense_success_rates_for_paths,
     compute_offense_player_counts,
     compute_offense_team_summary,
     compute_offense_team_counts,
+    process_offense_file,
 )
+from defense import process_defense_file
 from specialteams import (
     list_defense_files,
     compute_def_special_rates_for_paths,
@@ -410,54 +412,126 @@ def render_ui(off_df: pd.DataFrame, def_df: pd.DataFrame, agg: pd.DataFrame):
     with tab_counting:
         st.subheader("Defensive Ratings")
         st.caption("Defensive rating = points allowed per 100 defensive possessions")
- 
-        def_table_raw = agg[["Player", "DefPoss", "DefPoints", "DefRating"]].copy()
-        display_raw = def_table_raw[def_table_raw["DefRating"].notna()].copy()
-        sorted_raw = display_raw.sort_values(by="DefRating", ascending=True, na_position="last").reset_index(drop=True)
- 
-        # create a Styler to format DefRating for display while keeping numeric dtype for sorting logic
-        styler = sorted_raw.style.format({
-            "DefPoss": "{:.0f}",
-            "DefPoints": "{:.0f}",
-            "DefRating": lambda v: "—" if pd.isna(v) else f"{v:.1f}"
-        }, na_rep="—")
- 
-        st.dataframe(styler, width="stretch")
- 
-        # -------------------
-        # Team Defensive Summary (mapped names: Green / White)
-        # utils.map_name maps "D-Team 1" -> "Green" and "D-Team 2" -> "White"
-        # -------------------
-        team_keys = ["Green", "White"]
-        team_rows = def_df[def_df["Player"].isin(team_keys)].copy() if def_df is not None and not def_df.empty else pd.DataFrame()
-        if not team_rows.empty:
-            team_agg = team_rows.groupby("Player", as_index=False)[["DefPoss", "DefPoints"]].sum()
-            team_agg["DefRating"] = np.where(team_agg["DefPoss"] > 0, (team_agg["DefPoints"] / team_agg["DefPoss"] * 100).round(1), np.nan)
-            # keep requested order
-            team_agg["Player"] = pd.Categorical(team_agg["Player"], categories=team_keys, ordered=True)
-            team_agg = team_agg.sort_values("Player").reset_index(drop=True)
-            team_styler = team_agg.style.format({
+        
+        # Get file lists for both offense and defense
+        offense_paths = list_offense_files()
+        defense_paths = list_defense_files()
+        offense_names = [p.name for p in offense_paths]
+        defense_names = [p.name for p in defense_paths]
+        
+        # Create two columns for file selection
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**Offense Files**")
+            if not offense_paths:
+                st.info("No files found in Offense/ folder.")
+                selected_offense = []
+            else:
+                selected_offense = st.multiselect(
+                    "Offense Dates", 
+                    options=offense_names, 
+                    default=offense_names, 
+                    key="counting_off_files"
+                )
+        
+        with col2:
+            st.write("**Defense Files**")
+            if not defense_paths:
+                st.info("No files found in Defense/ folder.")
+                selected_defense = []
+            else:
+                selected_defense = st.multiselect(
+                    "Defense Dates", 
+                    options=defense_names, 
+                    default=defense_names, 
+                    key="counting_def_files"
+                )
+        
+        # Process selected files
+        selected_offense_paths = [p for p in offense_paths if p.name in selected_offense]
+        selected_defense_paths = [p for p in defense_paths if p.name in selected_defense]
+        
+        # Process offense files
+        offense_dfs = []
+        for path in selected_offense_paths:
+            try:
+                df = process_offense_file(path, path.name)
+                if df is not None and not df.empty:
+                    offense_dfs.append(df)
+            except Exception as e:
+                st.warning(f"Error processing offense file {path.name}: {e}")
+        
+        # Process defense files
+        defense_dfs = []
+        for path in selected_defense_paths:
+            try:
+                df = process_defense_file(path, path.name)
+                if df is not None and not df.empty:
+                    defense_dfs.append(df)
+            except Exception as e:
+                st.warning(f"Error processing defense file {path.name}: {e}")
+        
+        # Combine processed data
+        processed_off_df = pd.concat(offense_dfs, ignore_index=True) if offense_dfs else pd.DataFrame()
+        processed_def_df = pd.concat(defense_dfs, ignore_index=True) if defense_dfs else pd.DataFrame()
+        
+        # Recompute aggregation with selected data
+        filtered_agg = aggregate_by_player(processed_off_df, processed_def_df)
+        
+        if filtered_agg.empty or filtered_agg["DefPoss"].sum() == 0:
+            st.info("No defensive data found for selected files.")
+        else:
+            # Display player defensive ratings table
+            def_table_raw = filtered_agg[["Player", "DefPoss", "DefPoints", "ShotsAllowed", "DefRating"]].copy()
+            display_raw = def_table_raw[def_table_raw["DefRating"].notna()].copy()
+            sorted_raw = display_raw.sort_values(by="DefRating", ascending=True, na_position="last").reset_index(drop=True)
+     
+            # create a Styler to format DefRating for display while keeping numeric dtype for sorting logic
+            styler = sorted_raw.style.format({
                 "DefPoss": "{:.0f}",
                 "DefPoints": "{:.0f}",
+                "ShotsAllowed": "{:.0f}",
                 "DefRating": lambda v: "—" if pd.isna(v) else f"{v:.1f}"
             }, na_rep="—")
-            st.markdown("### Team Defensive Summary")
-            st.dataframe(team_styler, width="stretch")
-        else:
-            st.info("No Green / White team summary rows found in defense data for team summary.")
- 
-        chart_df = agg[agg["DefPoss"] > 0].sort_values("DefRating", ascending=True)
-        if not chart_df.empty:
-            fig = px.bar(
-                chart_df,
-                x="Player",
-                y="DefRating",
-                color="DefRating",
-                color_continuous_scale="Blues",
-                title="Defensive Rating (points allowed per 100 defensive possessions)",
-                height=420
-            )
-            fig.update_layout(yaxis_title="Def Rating", xaxis_title="")
-            st.plotly_chart(fig, width="stretch")
-        else:
-            st.info("No defensive possessions found to chart.")
+     
+            st.dataframe(styler, width="stretch")
+     
+            # -------------------
+            # Team Defensive Summary (mapped names: Green / White)
+            # -------------------
+            team_keys = ["Green", "White"]
+            team_rows = processed_def_df[processed_def_df["Player"].isin(team_keys)].copy() if not processed_def_df.empty else pd.DataFrame()
+            if not team_rows.empty:
+                team_agg = team_rows.groupby("Player", as_index=False)[["DefPoss", "DefPoints", "ShotsAllowed"]].sum()
+                team_agg["DefRating"] = np.where(team_agg["DefPoss"] > 0, (team_agg["DefPoints"] / team_agg["DefPoss"] * 100).round(1), np.nan)
+                # keep requested order
+                team_agg["Player"] = pd.Categorical(team_agg["Player"], categories=team_keys, ordered=True)
+                team_agg = team_agg.sort_values("Player").reset_index(drop=True)
+                team_styler = team_agg.style.format({
+                    "DefPoss": "{:.0f}",
+                    "DefPoints": "{:.0f}",
+                    "ShotsAllowed": "{:.0f}",
+                    "DefRating": lambda v: "—" if pd.isna(v) else f"{v:.1f}"
+                }, na_rep="—")
+                st.markdown("### Team Defensive Summary")
+                st.dataframe(team_styler, width="stretch")
+            else:
+                st.info("No Green / White team summary rows found in selected defense files.")
+     
+            # Defensive Rating Chart
+            chart_df = filtered_agg[filtered_agg["DefPoss"] > 0].sort_values("DefRating", ascending=True)
+            if not chart_df.empty:
+                fig = px.bar(
+                    chart_df,
+                    x="Player",
+                    y="DefRating",
+                    color="DefRating",
+                    color_continuous_scale="Blues",
+                    title="Defensive Rating (points allowed per 100 defensive possessions)",
+                    height=420
+                )
+                fig.update_layout(yaxis_title="Def Rating", xaxis_title="")
+                st.plotly_chart(fig, width="stretch")
+            else:
+                st.info("No defensive possessions found to chart.")

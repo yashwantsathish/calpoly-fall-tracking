@@ -1,0 +1,27 @@
+,Team:team1,Team:team2,player stats:PT +,shot chart:IO3 -,shot chart:NIO3 +,shot chart:NIO3 -,shot chart:RZ +,shot chart:RZ -,shot chart:Turnover -,offense_lab
+JMo Stat,5,0,2,0,1,1,0,0,1,5
+AP Stat,1,0,0,0,0,0,1,0,0,1
+Austin Stat,0,2,1,1,0,0,1,0,0,2
+Braden Stat,4,0,0,3,0,1,0,0,0,4
+Guz Stat,0,3,2,0,1,0,1,0,0,3
+Cayden Stat,0,4,2,0,0,0,3,0,0,4
+Luka Stat,0,3,2,0,0,0,1,1,1,3
+Jake Stat,8,0,1,0,3,2,0,1,2,8
+Peter Stat,3,0,1,0,0,1,1,0,0,3
+Troy Stat,0,4,2,0,1,0,0,1,1,4
+Kieran Stat,1,0,1,0,0,0,0,1,0,1
+Team 1,19,0,5,3,5,5,2,2,3,19
+AP,17,0,4,2,5,4,2,2,2,17
+Braden,11,0,3,3,0,3,1,1,3,11
+JMo,14,0,4,2,4,4,2,1,3,14
+Kieran,18,0,5,3,4,5,2,2,3,18
+Jake,18,0,5,3,4,5,2,2,3,18
+Peter,14,0,4,2,5,4,1,2,1,14
+Team 2,0,16,9,1,2,0,6,2,2,16
+Troy,0,16,9,1,2,0,6,2,2,16
+Guz,0,16,9,1,2,0,6,2,2,16
+Cayden,0,16,9,1,2,0,6,2,2,16
+Hamad,0,0,0,0,0,0,0,0,0,0
+Austin,0,16,9,1,2,0,6,2,2,16
+Notable,3,1,0,0,0,1,0,0,0,4
+Luka,0,16,9,1,2,0,6,2,2,16

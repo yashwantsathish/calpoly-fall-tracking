@@ -31,6 +31,16 @@ def process_defense_file(file, filename: str) -> pd.DataFrame:
         2.25 * df["shot chart:FT 3 (D)"]
     )
 
+    # Calculate total shots allowed
+    df["ShotsAllowed"] = (
+        df["shot chart:RZ + (D)"] +
+        df["shot chart:TT + (D)"] +
+        df["shot chart:IO3 + (D)"] +
+        df["shot chart:NIO3 + (D)"] +
+        df["shot chart:FT 2 (D)"] +
+        df["shot chart:FT 3 (D)"]
+    )
+
     if "defense_lab" in df.columns and df["defense_lab"].sum() > 0:
         df = df.rename(columns={"defense_lab": "DefPoss"})
     else:
@@ -39,6 +49,6 @@ def process_defense_file(file, filename: str) -> pd.DataFrame:
 
     df["Date"] = parse_date_from_filename(filename)
     grp_cols = ["Date", "Player"]
-    numeric_cols = ["DefPoints", "DefPoss"]
+    numeric_cols = ["DefPoints", "DefPoss", "ShotsAllowed"]
     df = df.groupby(grp_cols, as_index=False)[numeric_cols].sum()
-    return df[["Date", "Player", "DefPoints", "DefPoss"]]
+    return df[["Date", "Player", "DefPoints", "DefPoss", "ShotsAllowed"]]
