@@ -39,6 +39,11 @@ def clean_and_filter_players(df: pd.DataFrame, name_col="Unnamed: 0") -> pd.Data
             return None
         s = raw.strip()
         s = re.sub(r'^\s*#?\d+\s+', '', s)
+        
+        # Allow Team 1 and Team 2 to pass through unchanged
+        if s in ["Team 1", "Team 2"]:
+            return s
+            
         # map defensive summary rows to friendly team names:
         # D-Team 1 -> "Green", D-Team 2 -> "White"
         if re.match(r'(?i)^\s*d[- ]?team\s*1\b', s):

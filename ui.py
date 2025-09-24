@@ -20,9 +20,15 @@ from specialteams import (
     compute_def_special_player_counts,
     compute_def_special_team_summary,
 )
+from shotchart import (
+    list_shot_chart_files,
+    compute_shot_chart_stats_for_paths,
+    compute_team_shot_chart_summary,
+    compute_overall_team_summary,
+)
 # NOTE: render_ui expects agg to be precomputed and off/def dfs available if needed
 def render_ui(off_df: pd.DataFrame, def_df: pd.DataFrame, agg: pd.DataFrame):
-    tab_tracking, tab_special, tab_counting = st.tabs(["Tracking Data", "Special Teams", "Counting Stats"])
+    tab_tracking, tab_special, tab_shot_chart, tab_counting = st.tabs(["Tracking Data", "Special Teams", "Shot Chart", "Counting Stats"])
 
     with tab_tracking:
         offense_paths = list_offense_files()
@@ -417,6 +423,350 @@ def render_ui(off_df: pd.DataFrame, def_df: pd.DataFrame, agg: pd.DataFrame):
                             styler_team = styler_team.applymap(_cell_style_team, subset=pct_cols_team)
                         st.markdown("### Team Summary")
                         st.dataframe(styler_team, width="stretch")
+
+    with tab_shot_chart:
+        st.subheader("Shot Chart Analytics")
+        st.caption("Shooting statistics by zone and player")
+        
+        # Get shot chart files
+        shot_chart_paths = list_shot_chart_files()
+        shot_chart_names = [p.name for p in shot_chart_paths]
+        
+        if not shot_chart_paths:
+            st.info("No files found in Shot Chart/ folder.")
+        else:
+            selected_shot_chart = st.multiselect(
+                "Shot Chart Dates", 
+                options=shot_chart_names, 
+                default=shot_chart_names, 
+                key="shot_chart_files"
+            )
+            selected_shot_chart_paths = [p for p in shot_chart_paths if p.name in selected_shot_chart]
+            
+            if not selected_shot_chart_paths:
+                st.info("Select one or more shot chart files to view statistics.")
+            else:
+                # Get individual player stats
+                player_stats = compute_shot_chart_stats_for_paths(selected_shot_chart_paths)
+                
+                if player_stats.empty:
+                    st.info("No shot chart data found in selected files.")
+                else:
+                    # Table View Selector
+                    st.markdown("### Shot Chart Data Views")
+                    view_option = st.selectbox(
+                        "View Options:",
+                        ["Efficiency (EFG%, TS%, PPP)", "Shot Types", "Select your own columns"],
+                        key="view_option_shot_chart"
+                    )
+                    
+                    # Filter out team rows for individual display (used by both team summary and individual display)
+                    individual_stats = player_stats[~player_stats["Player"].isin(["Team 1", "Team 2"])].copy()
+                    
+                    # Get Team 1 and Team 2 rows for breakdown
+                    team_rows = player_stats[player_stats["Player"].isin(["Team 1", "Team 2"])].copy()
+                    
+                    # Overall Team Statistics (updates with view selection)
+                    st.markdown("### Overall Team Statistics")
+                    
+                    # Calculate overall team stats by summing all individual players
+                    # Calculate team totals (exclude percentage columns from sum)
+                    percentage_cols = ['ShootingPct', 'EffectiveFGPct', 'TrueShootingPct', 'RedZonePct', 'ToughTwoPct', 
+                                     'InsideOut3Pct', 'NonInsideOut3Pct', 'TwoPointPct', 'ThreePointPct']
+                    numeric_cols_to_sum = individual_stats.select_dtypes(include=[np.number]).columns.difference(percentage_cols)
+                    team_totals = individual_stats[numeric_cols_to_sum].sum()
+                    team_totals["Player"] = "Overall Team"
+                    
+                    # Recalculate team percentages as whole numbers
+                    if team_totals["TotalShots"] > 0:
+                        team_totals["ShootingPct"] = round((team_totals["ShotsMade"] / team_totals["TotalShots"] * 100), 0)
+                    else:
+                        team_totals["ShootingPct"] = np.nan
+                        
+                    if team_totals["FieldGoalAttempts"] > 0:
+                        team_totals["EffectiveFGPct"] = round(((team_totals["FieldGoalMade"] + 0.5 * team_totals["ThreePointMade"]) / team_totals["FieldGoalAttempts"] * 100), 0)
+                    else:
+                        team_totals["EffectiveFGPct"] = np.nan
+                        
+                    ts_denominator = 2 * (team_totals["FieldGoalAttempts"] + 0.44 * team_totals["EstimatedFTA"])
+                    if ts_denominator > 0:
+                        team_totals["TrueShootingPct"] = round((team_totals["Points"] / ts_denominator * 100), 0)
+                    else:
+                        team_totals["TrueShootingPct"] = np.nan
+                        
+                    if team_totals["Possessions"] > 0:
+                        team_totals["PointsPerPossession"] = round((team_totals["Points"] / team_totals["Possessions"]), 2)
+                    else:
+                        team_totals["PointsPerPossession"] = np.nan
+                    
+                    # Recalculate new efficiency metrics from raw totals
+                    # Red Zone %
+                    rz_attempts = team_totals.get("shot chart:RZ +", 0) + team_totals.get("shot chart:RZ -", 0)
+                    if rz_attempts > 0:
+                        team_totals["RedZonePct"] = round((team_totals.get("shot chart:RZ +", 0) / rz_attempts * 100), 0)
+                    else:
+                        team_totals["RedZonePct"] = np.nan
+                    
+                    # Tough Two %
+                    tt_attempts = team_totals.get("shot chart:TT +", 0) + team_totals.get("shot chart:TT -", 0)
+                    if tt_attempts > 0:
+                        team_totals["ToughTwoPct"] = round((team_totals.get("shot chart:TT +", 0) / tt_attempts * 100), 0)
+                    else:
+                        team_totals["ToughTwoPct"] = np.nan
+                    
+                    # Inside-Out 3 %
+                    io3_attempts = team_totals.get("shot chart:IO3 +", 0) + team_totals.get("shot chart:IO3 -", 0)
+                    if io3_attempts > 0:
+                        team_totals["InsideOut3Pct"] = round((team_totals.get("shot chart:IO3 +", 0) / io3_attempts * 100), 0)
+                    else:
+                        team_totals["InsideOut3Pct"] = np.nan
+                    
+                    # Non Inside-Out 3 %
+                    nio3_attempts = team_totals.get("shot chart:NIO3 +", 0) + team_totals.get("shot chart:NIO3 -", 0)
+                    if nio3_attempts > 0:
+                        team_totals["NonInsideOut3Pct"] = round((team_totals.get("shot chart:NIO3 +", 0) / nio3_attempts * 100), 0)
+                    else:
+                        team_totals["NonInsideOut3Pct"] = np.nan
+                    
+                    # 2PT% and 3PT%
+                    if team_totals["TwoPointAttempts"] > 0:
+                        team_totals["TwoPointPct"] = round((team_totals["TwoPointMade"] / team_totals["TwoPointAttempts"] * 100), 0)
+                    else:
+                        team_totals["TwoPointPct"] = np.nan
+                    
+                    if team_totals["ThreePointAttempts"] > 0:
+                        team_totals["ThreePointPct"] = round((team_totals["ThreePointMade"] / team_totals["ThreePointAttempts"] * 100), 0)
+                    else:
+                        team_totals["ThreePointPct"] = np.nan
+                    
+                    # Create team display based on selected view
+                    if view_option == "Efficiency (EFG%, TS%, PPP)":
+                        team_display_cols = [
+                            "Player", "TotalShots", "ShotsMade", "Points", "Possessions",
+                            "EffectiveFGPct", "TrueShootingPct", "PointsPerPossession",
+                            "RedZonePct", "ToughTwoPct", "InsideOut3Pct", "NonInsideOut3Pct"
+                        ]
+                    elif view_option == "Shot Types":
+                        team_display_cols = [
+                            "Player", "TotalShots", "TwoPointMade", "TwoPointAttempts", "ThreePointMade", "ThreePointAttempts",
+                            "shot chart:RZ +", "shot chart:RZ -", "shot chart:TT +", "shot chart:TT -",
+                            "shot chart:IO3 +", "shot chart:IO3 -", "shot chart:NIO3 +", "shot chart:NIO3 -",
+                            "shot chart:FT 2", "shot chart:FT 3", "shot chart:Turnover -"
+                        ]
+                    else:  # Custom view - use same columns as individual players will show
+                        all_available_cols = [col for col in individual_stats.columns if col != "Player"]
+                        selected_cols = st.multiselect(
+                            "Select columns to display:",
+                            options=all_available_cols,
+                            default=["TotalShots", "ShotsMade", "RedZonePct", "ToughTwoPct", "TwoPointPct", "ThreePointPct"],
+                            help="Choose which columns to show in the table",
+                            key="team_columns"
+                        )
+                        team_display_cols = ["Player"] + selected_cols
+                    
+                    # Filter team columns that exist
+                    available_team_cols = [col for col in team_display_cols if col in team_totals.index or col == "Player"]
+                    team_df = pd.DataFrame([team_totals[available_team_cols[1:]]]).reset_index(drop=True)
+                    team_df.insert(0, "Player", "Overall Team")
+                    team_df.columns = available_team_cols
+                    
+                    # Format team dataframe
+                    team_format_dict = {
+                        "TotalShots": "{:.0f}",
+                        "ShotsMade": "{:.0f}",
+                        "ShotsMissed": "{:.0f}",
+                        "Points": "{:.1f}",
+                        "Possessions": "{:.0f}",
+                        "PointsPerPossession": lambda v: "—" if pd.isna(v) else f"{v:.2f}",
+                        "ShootingPct": lambda v: "—" if pd.isna(v) else f"{int(v)}%",
+                        "EffectiveFGPct": lambda v: "—" if pd.isna(v) else f"{int(v)}%",
+                        "TrueShootingPct": lambda v: "—" if pd.isna(v) else f"{int(v)}%",
+                        "RedZonePct": lambda v: "—" if pd.isna(v) else f"{int(v)}%",
+                        "ToughTwoPct": lambda v: "—" if pd.isna(v) else f"{int(v)}%",
+                        "InsideOut3Pct": lambda v: "—" if pd.isna(v) else f"{int(v)}%",
+                        "NonInsideOut3Pct": lambda v: "—" if pd.isna(v) else f"{int(v)}%",
+                        "TwoPointPct": lambda v: "—" if pd.isna(v) else f"{int(v)}%",
+                        "ThreePointPct": lambda v: "—" if pd.isna(v) else f"{int(v)}%",
+                        "TwoPointMade": "{:.0f}",
+                        "TwoPointAttempts": "{:.0f}",
+                        "ThreePointMade": "{:.0f}",
+                        "ThreePointAttempts": "{:.0f}",
+                        "shot chart:RZ +": "{:.0f}",
+                        "shot chart:RZ -": "{:.0f}",
+                        "shot chart:IO3 +": "{:.0f}",
+                        "shot chart:IO3 -": "{:.0f}",
+                        "shot chart:NIO3 +": "{:.0f}",
+                        "shot chart:NIO3 -": "{:.0f}",
+                        "shot chart:TT +": "{:.0f}",
+                        "shot chart:TT -": "{:.0f}",
+                        "shot chart:FT 2": "{:.0f}",
+                        "shot chart:FT 3": "{:.0f}",
+                        "shot chart:Turnover -": "{:.0f}",
+                        "TotalPoints": "{:.1f}",
+                        "offense_lab": "{:.0f}"
+                    }
+                    
+                    # Only include format rules for columns that exist
+                    active_team_format_dict = {k: v for k, v in team_format_dict.items() if k in team_df.columns}
+                    team_styler = team_df.style.format(active_team_format_dict, na_rep="—")
+                    
+                    st.dataframe(team_styler, use_container_width=True)
+                    
+                    # Team 1 vs Team 2 Breakdown
+                    if not team_rows.empty:
+                        st.markdown("#### Team 1 vs Team 2 Breakdown")
+                        
+                        # Process team rows for display based on selected view
+                        team_breakdown_df = team_rows.copy()
+                        
+                        # Create team breakdown display based on selected view
+                        if view_option == "Efficiency (EFG%, TS%, PPP)":
+                            team_breakdown_cols = [
+                                "Player", "TotalShots", "ShotsMade", "Points", "Possessions",
+                                "EffectiveFGPct", "TrueShootingPct", "PointsPerPossession",
+                                "RedZonePct", "ToughTwoPct", "InsideOut3Pct", "NonInsideOut3Pct"
+                            ]
+                        elif view_option == "Shot Types":
+                            team_breakdown_cols = [
+                                "Player", "TotalShots", "TwoPointMade", "TwoPointAttempts", "ThreePointMade", "ThreePointAttempts",
+                                "shot chart:RZ +", "shot chart:RZ -", "shot chart:TT +", "shot chart:TT -",
+                                "shot chart:IO3 +", "shot chart:IO3 -", "shot chart:NIO3 +", "shot chart:NIO3 -",
+                                "shot chart:FT 2", "shot chart:FT 3", "shot chart:Turnover -"
+                            ]
+                        else:  # Custom view
+                            if 'team_columns' in st.session_state:
+                                selected_cols = st.session_state.team_columns
+                            else:
+                                selected_cols = ["TotalShots", "ShotsMade", "RedZonePct", "ToughTwoPct", "TwoPointPct", "ThreePointPct"]
+                            team_breakdown_cols = ["Player"] + selected_cols
+                        
+                        # Filter columns that exist in team breakdown
+                        available_breakdown_cols = [col for col in team_breakdown_cols if col in team_breakdown_df.columns]
+                        team_breakdown_display = team_breakdown_df[available_breakdown_cols].copy()
+                        
+                        # Format team breakdown dataframe using same formatting rules
+                        active_breakdown_format = {k: v for k, v in team_format_dict.items() if k in team_breakdown_display.columns}
+                        breakdown_styler = team_breakdown_display.style.format(active_breakdown_format, na_rep="—")
+                        
+                        st.dataframe(breakdown_styler, use_container_width=True)
+                    
+                    # Individual Player Statistics
+                    st.markdown("### Individual Player Statistics")
+                    
+                    if not individual_stats.empty:
+                        # Define column sets for different views
+                        if view_option == "Efficiency (EFG%, TS%, PPP)":
+                            display_cols = [
+                                "Player", "TotalShots", "ShotsMade", "Points", 
+                                "EffectiveFGPct", "TrueShootingPct", "PointsPerPossession",
+                                "RedZonePct", "ToughTwoPct", "InsideOut3Pct", "NonInsideOut3Pct"
+                            ]
+                        elif view_option == "Shot Types":
+                            display_cols = [
+                                "Player", "TotalShots", "TwoPointMade", "TwoPointAttempts", "ThreePointMade", "ThreePointAttempts",
+                                "shot chart:RZ +", "shot chart:RZ -", "shot chart:TT +", "shot chart:TT -",
+                                "shot chart:IO3 +", "shot chart:IO3 -", "shot chart:NIO3 +", "shot chart:NIO3 -",
+                                "shot chart:FT 2", "shot chart:FT 3", "shot chart:Turnover -"
+                            ]
+                        else:  # "Select your own columns"
+                            # Use the same columns selected for team display
+                            if 'team_columns' in st.session_state:
+                                selected_cols = st.session_state.team_columns
+                            else:
+                                selected_cols = ["TotalShots", "ShotsMade", "RedZonePct", "ToughTwoPct", "TwoPointPct", "ThreePointPct"]
+                            display_cols = ["Player"] + selected_cols
+                        
+                        # Filter columns that exist in the data
+                        available_cols = [col for col in display_cols if col in individual_stats.columns]
+                        display_df = individual_stats[available_cols].copy()
+                        
+                        # Sort by appropriate metric based on view
+                        if view_option == "Efficiency (EFG%, TS%, PPP)" and "PointsPerPossession" in display_df.columns:
+                            display_df = display_df.sort_values("PointsPerPossession", ascending=False)
+                        elif "TrueShootingPct" in display_df.columns:
+                            display_df = display_df.sort_values("TrueShootingPct", ascending=False)
+                        elif "TotalPoints" in display_df.columns:
+                            display_df = display_df.sort_values("TotalPoints", ascending=False)
+                        
+                        # Format the dataframe
+                        format_dict = {
+                            "TotalShots": "{:.0f}",
+                            "ShotsMade": "{:.0f}",
+                            "ShotsMissed": "{:.0f}",
+                            "Points": "{:.1f}",
+                            "Possessions": "{:.0f}",
+                            "PointsPerPossession": lambda v: "—" if pd.isna(v) else f"{v:.2f}",
+                            "ShootingPct": lambda v: "—" if pd.isna(v) else f"{int(v)}%",
+                            "EffectiveFGPct": lambda v: "—" if pd.isna(v) else f"{int(v)}%",
+                            "TrueShootingPct": lambda v: "—" if pd.isna(v) else f"{int(v)}%",
+                            "RedZonePct": lambda v: "—" if pd.isna(v) else f"{int(v)}%",
+                            "ToughTwoPct": lambda v: "—" if pd.isna(v) else f"{int(v)}%",
+                            "InsideOut3Pct": lambda v: "—" if pd.isna(v) else f"{int(v)}%",
+                            "NonInsideOut3Pct": lambda v: "—" if pd.isna(v) else f"{int(v)}%",
+                            "TwoPointPct": lambda v: "—" if pd.isna(v) else f"{int(v)}%",
+                            "ThreePointPct": lambda v: "—" if pd.isna(v) else f"{int(v)}%",
+                            "TwoPointMade": "{:.0f}",
+                            "TwoPointAttempts": "{:.0f}",
+                            "ThreePointMade": "{:.0f}",
+                            "ThreePointAttempts": "{:.0f}",
+                            "shot chart:RZ +": "{:.0f}",
+                            "shot chart:RZ -": "{:.0f}",
+                            "shot chart:IO3 +": "{:.0f}",
+                            "shot chart:IO3 -": "{:.0f}",
+                            "shot chart:NIO3 +": "{:.0f}",
+                            "shot chart:NIO3 -": "{:.0f}",
+                            "shot chart:TT +": "{:.0f}",
+                            "shot chart:TT -": "{:.0f}",
+                            "shot chart:FT 2": "{:.0f}",
+                            "shot chart:FT 3": "{:.0f}",
+                            "shot chart:Turnover -": "{:.0f}",
+                            "TotalPoints": "{:.1f}",
+                            "offense_lab": "{:.0f}"
+                        }
+                        
+                        # Only include format rules for columns that exist
+                        active_format_dict = {k: v for k, v in format_dict.items() if k in display_df.columns}
+                        
+                        styler = display_df.style.format(active_format_dict, na_rep="—")
+                        
+                        st.dataframe(styler, use_container_width=True)
+                    
+                    # Advanced Shooting Efficiency Charts
+                    if not individual_stats.empty:
+                        # Create two columns for charts
+                        chart_col1, chart_col2 = st.columns(2)
+                        
+                        with chart_col1:
+                            if "EffectiveFGPct" in individual_stats.columns:
+                                efg_df = individual_stats[individual_stats["EffectiveFGPct"].notna()].copy()
+                                if not efg_df.empty:
+                                    fig_efg = px.bar(
+                                        efg_df.sort_values("EffectiveFGPct", ascending=True),
+                                        x="Player",
+                                        y="EffectiveFGPct",
+                                        color="EffectiveFGPct",
+                                        color_continuous_scale="Blues",
+                                        title="Effective Field Goal % by Player",
+                                        height=400
+                                    )
+                                    fig_efg.update_layout(yaxis_title="eFG%", xaxis_title="")
+                                    st.plotly_chart(fig_efg, use_container_width=True)
+                        
+                        with chart_col2:
+                            if "TrueShootingPct" in individual_stats.columns:
+                                ts_df = individual_stats[individual_stats["TrueShootingPct"].notna()].copy()
+                                if not ts_df.empty:
+                                    fig_ts = px.bar(
+                                        ts_df.sort_values("TrueShootingPct", ascending=True),
+                                        x="Player",
+                                        y="TrueShootingPct",
+                                        color="TrueShootingPct",
+                                        color_continuous_scale="Viridis",
+                                        title="True Shooting % by Player",
+                                        height=400
+                                    )
+                                    fig_ts.update_layout(yaxis_title="TS%", xaxis_title="")
+                                    st.plotly_chart(fig_ts, use_container_width=True)
 
     with tab_counting:
         st.subheader("Defensive Ratings")
